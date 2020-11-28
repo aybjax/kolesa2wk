@@ -1,0 +1,144 @@
+version: "3"
+services:
+  # Для запуска приложения запустите: docker-compose up web
+  web:
+    container_name: web
+    image: nginx:1.17-alpine
+    volumes:
+      - ./docker/nginx/nginx.conf:/config/nginx.conf
+      - ./:/code
+    command: nginx -c /config/nginx.conf
+    user: root
+    ports:
+      - 8080:8080
+    depends_on:
+      - mq
+      - fpm
+      - db
+      - redis
+      - delete-cli
+      - save-cli
+    stop_signal: SIGTERM
+
+  # Процесс fpm
+  fpm:
+    container_name: fpm
+    build: ./docker/php
+    volumes:
+      - ./:/code
+    environment:
+      DATABASE_SERVER_NAME: ${DATABASE_SERVER_NAME}
+      DATABASE_PORT: ${DATABASE_PORT}
+      DATABASE_NAME: ${DATABASE_NAME}
+      DATABASE_USER: ${DATABASE_USER}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD}
+      REDIS_NAME: ${REDIS_NAME}
+      REDIS_PORT: ${REDIS_PORT}
+
+
+  # Процесс mysql db
+  db:
+    image: mysql:5.7
+    container_name: ${DATABASE_SERVER_NAME}
+    command: --default-authentication-plugin=mysql_native_password
+    restart: always
+    tty: true
+    ports:
+      - ${DATABASE_PORT}:${DATABASE_PORT}
+    environment:
+      MYSQL_DATABASE: ${DATABASE_NAME}
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_USER: ${DATABASE_USER}
+      MYSQL_PASSWORD: ${DATABASE_PASSWORD}
+      SERVICE_TAGS: dev
+      SERVICE_NAME: mysql
+    volumes:
+      - mysql-named:/var/lib/mysql
+
+  #redis
+  redis:
+    image: redis:6-alpine
+    container_name: ${REDIS_NAME}
+    ports:
+      - ${REDIS_PORT}:${REDIS_PORT}
+    volumes:
+      - redis-named:/data/
+      - ./docker/redis/redis.conf:/usr/local/etc/redis/redis.conf
+    command: redis-server /usr/local/etc/redis/redis.conf
+
+  #rabbitmq
+  mq:
+    image: rabbitmq:3.8-rc-alpine
+    container_name: ${QUEUE_HOST_NAME}
+    volumes:
+      - mq-named:/var/lib/rabbitmq
+    ports:
+      - 15672:15672
+      - ${QUEUE_PORT}:${QUEUE_PORT}
+    environment:
+      QUEUE_USER: ${QUEUE_USER}
+      QUEUE_PASSWORD: ${QUEUE_PASSWORD}
+
+  #контроллер mq
+  save-cli:
+    build: ./docker/php
+    container_name: save
+    volumes:
+      - ./:/code
+    command: php /code/Queue/save.php
+    depends_on:
+      - mq
+    environment:
+      DATABASE_SERVER_NAME: ${DATABASE_SERVER_NAME}
+      DATABASE_PORT: ${DATABASE_PORT}
+      DATABASE_NAME: ${DATABASE_NAME}
+      DATABASE_USER: ${DATABASE_USER}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD}
+      REDIS_NAME: ${REDIS_NAME}
+      REDIS_PORT: ${REDIS_PORT}
+      QUEUE_HOST_NAME: ${QUEUE_HOST_NAME}
+      QUEUE_PORT: ${QUEUE_PORT}
+      QUEUE_USER: ${QUEUE_USER}
+      QUEUE_PASSWORD: ${QUEUE_PASSWORD}
+  #котроллер mq
+  delete-cli:
+    build: ./docker/php
+    container_name: delete
+    volumes:
+      - ./:/code
+    command: php /code/Queue/delete.php
+    depends_on:
+      - mq
+    environment:
+      DATABASE_SERVER_NAME: ${DATABASE_SERVER_NAME}
+      DATABASE_PORT: ${DATABASE_PORT}
+      DATABASE_NAME: ${DATABASE_NAME}
+      DATABASE_USER: ${DATABASE_USER}
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD}
+      REDIS_NAME: ${REDIS_NAME}
+      REDIS_PORT: ${REDIS_PORT}
+      QUEUE_HOST_NAME: ${QUEUE_HOST_NAME}
+      QUEUE_PORT: ${QUEUE_PORT}
+      QUEUE_USER: ${QUEUE_USER}
+      QUEUE_PASSWORD: ${QUEUE_PASSWORD}
+
+
+  # Для запуска тестов запустите: docker-compose up tests
+  tests:
+    build: ./docker/php
+    command: /usr/local/bin/codecept run -vvv
+    volumes:
+      - ./:/code
+    depends_on:
+      - web
+
+  # Для запуска терминала с настроенной средой php запустите: docker-compose run terminal
+  terminal:
+    build: ./docker/php
+    entrypoint: /bin/sh
+    volumes:
+      - ./:/code
+volumes:
+  mysql-named:
+  redis-named:
+  mq-named:
